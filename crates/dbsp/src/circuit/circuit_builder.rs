@@ -1131,6 +1131,31 @@ pub trait Node: Any {
     /// Panics for operators that don't support replay.
     fn end_replay(&mut self) -> Result<(), DbspError>;
 
+    /// Start replaying `trace` to the node's replay stream (see
+    /// [`Operator::start_sync_replay`]).
+    ///
+    /// # Panics
+    ///
+    /// Panics for operators that don't support replay.
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        let _ = trace;
+        panic!("start_sync_replay() is not supported by this node")
+    }
+
+    /// Swap the node's operator state with `other`, a node of the same
+    /// concrete type (see [`Operator::swap_state`]).
+    ///
+    /// For strict (feedback) operators, whose two node halves share one
+    /// operator, the input half is a no-op: the output half's swap moves the
+    /// shared operator's entire state, and swapping twice would put it back.
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError>;
+
+    /// True if [`Self::swap_state_with`] can transfer this node's state
+    /// (see [`Operator::supports_state_transfer`]).
+    fn supports_state_transfer(&self) -> bool {
+        true
+    }
+
     /// Takes a fingerprint of the node's inner operator adds it to `fip`.
     fn fingerprint(&self, fip: &mut Fingerprinter) {
         fip.hash(type_name_of_val(self));
@@ -4827,6 +4852,21 @@ where
         self.operator.start_replay()
     }
 
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
+    }
+
     fn end_replay(&mut self) -> Result<(), DbspError> {
         self.operator.end_replay()
     }
@@ -4976,6 +5016,21 @@ where
 
     fn start_replay(&mut self) -> Result<(), DbspError> {
         self.operator.start_replay()
+    }
+
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
     }
 
     fn is_replay_complete(&self) -> bool {
@@ -5143,6 +5198,21 @@ where
         self.operator.start_replay()
     }
 
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
+    }
+
     fn is_replay_complete(&self) -> bool {
         self.operator.is_replay_complete()
     }
@@ -5299,6 +5369,21 @@ where
 
     fn start_replay(&mut self) -> Result<(), DbspError> {
         self.operator.start_replay()
+    }
+
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
     }
 
     fn is_replay_complete(&self) -> bool {
@@ -5516,6 +5601,21 @@ where
         self.operator.start_replay()
     }
 
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
+    }
+
     fn is_replay_complete(&self) -> bool {
         self.operator.is_replay_complete()
     }
@@ -5705,6 +5805,21 @@ where
 
     fn start_replay(&mut self) -> Result<(), DbspError> {
         self.operator.start_replay()
+    }
+
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
     }
 
     fn is_replay_complete(&self) -> bool {
@@ -5922,6 +6037,21 @@ where
         self.operator.start_replay()
     }
 
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
+    }
+
     fn is_replay_complete(&self) -> bool {
         self.operator.is_replay_complete()
     }
@@ -6109,6 +6239,21 @@ where
 
     fn start_replay(&mut self) -> Result<(), DbspError> {
         self.operator.start_replay()
+    }
+
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
     }
 
     fn is_replay_complete(&self) -> bool {
@@ -6321,6 +6466,21 @@ where
         self.operator.start_replay()
     }
 
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
+    }
+
     fn is_replay_complete(&self) -> bool {
         self.operator.is_replay_complete()
     }
@@ -6516,6 +6676,21 @@ where
         self.operator.start_replay()
     }
 
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator.swap_state(&mut other.operator)
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.supports_state_transfer()
+    }
+
     fn is_replay_complete(&self) -> bool {
         self.operator.is_replay_complete()
     }
@@ -6701,6 +6876,23 @@ where
         self.operator.borrow_mut().start_replay()
     }
 
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.borrow_mut().start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, other: &mut dyn Node) -> Result<(), DbspError> {
+        let other = (other as &mut dyn Any)
+            .downcast_mut::<Self>()
+            .expect("swap_state_with: node type mismatch");
+        self.operator
+            .borrow_mut()
+            .swap_state(&mut other.operator.borrow_mut())
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        self.operator.borrow().supports_state_transfer()
+    }
+
     fn is_replay_complete(&self) -> bool {
         self.operator.borrow().is_replay_complete()
     }
@@ -6866,6 +7058,17 @@ where
 
     fn start_replay(&mut self) -> Result<(), DbspError> {
         self.operator.borrow_mut().start_replay()
+    }
+
+    fn start_sync_replay(&mut self, trace: Box<dyn Any>) -> Result<(), DbspError> {
+        self.operator.borrow_mut().start_sync_replay(trace)
+    }
+
+    fn swap_state_with(&mut self, _other: &mut dyn Node) -> Result<(), DbspError> {
+        // The input half of a strict operator shares its operator with the
+        // output half, whose `swap_state_with` moves the operator's entire
+        // state; swapping here too would put it back.
+        Ok(())
     }
 
     fn is_replay_complete(&self) -> bool {
@@ -7107,6 +7310,19 @@ where
 
     fn end_replay(&mut self) -> Result<(), DbspError> {
         Ok(())
+    }
+
+    fn swap_state_with(&mut self, _other: &mut dyn Node) -> Result<(), DbspError> {
+        // Nested circuits cannot transfer state between circuit copies;
+        // `restore_concurrent` refuses to start a concurrent bootstrap when
+        // the backfilled region includes a nested circuit.
+        Err(DbspError::Runtime(RuntimeError::BootstrapCircuit(
+            "state transfer is not supported for nested circuits".to_string(),
+        )))
+    }
+
+    fn supports_state_transfer(&self) -> bool {
+        false
     }
 
     fn set_label(&mut self, key: &str, value: &str) {

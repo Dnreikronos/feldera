@@ -52,6 +52,7 @@ PIPELINE_FIELD_SELECTOR_ALL_FIELDS = [
     "deployment_id",
     "bootstrap_policy",
     "silent_bootstrap",
+    "concurrent_bootstrap",
 ]
 
 PIPELINE_FIELD_SELECTOR_STATUS_FIELDS = [
@@ -86,6 +87,7 @@ PIPELINE_FIELD_SELECTOR_STATUS_FIELDS = [
     "storage_status_details",
     "bootstrap_policy",
     "silent_bootstrap",
+    "concurrent_bootstrap",
 ]
 
 

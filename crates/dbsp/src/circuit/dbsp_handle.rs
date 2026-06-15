@@ -427,6 +427,14 @@ pub struct CircuitStorageConfig {
     /// The initial checkpoint to start the circuit from, or `None` to start
     /// fresh from a new circuit.
     pub init_checkpoint: Option<Uuid>,
+
+    /// Suppress the automatic stop-the-world restore from `init_checkpoint`
+    /// during [`Runtime::init_circuit`], so the caller can drive a concurrent
+    /// bootstrap via [`DBSPHandle::start_concurrent_bootstrap`] instead.
+    ///
+    /// `init_checkpoint` is still carried (the caller needs it as the
+    /// concurrent-bootstrap base), but the circuit comes up un-restored.
+    pub defer_restore: bool,
 }
 
 impl CircuitStorageConfig {
@@ -442,12 +450,20 @@ impl CircuitStorageConfig {
             options,
             backend,
             init_checkpoint: None,
+            defer_restore: false,
         })
     }
 
     pub fn with_init_checkpoint(self, init_checkpoint: Option<Uuid>) -> Self {
         Self {
             init_checkpoint,
+            ..self
+        }
+    }
+
+    pub fn with_defer_restore(self, defer_restore: bool) -> Self {
+        Self {
+            defer_restore,
             ..self
         }
     }
@@ -1059,9 +1075,14 @@ impl Runtime {
             Ok(result) => result,
         };
 
-        let (backend, init_checkpoint) = storage
-            .map(|storage| (storage.backend.clone(), storage.init_checkpoint))
-            .unzip();
+        let (backend, init_checkpoint, defer_restore) = match storage {
+            Some(storage) => (
+                Some(storage.backend.clone()),
+                storage.init_checkpoint,
+                storage.defer_restore,
+            ),
+            None => (None, None, false),
+        };
         let mut dbsp = DBSPHandle::new(
             backend,
             runtime,
@@ -1069,8 +1090,14 @@ impl Runtime {
             status_receivers,
             fingerprint,
         )?;
-        if let Some(init_checkpoint) = init_checkpoint.flatten() {
-            dbsp.send_restore(init_checkpoint.to_string().into())?;
+        // When `defer_restore` is set the caller drives a concurrent bootstrap
+        // (`start_concurrent_bootstrap`) instead of the automatic stop-the-world
+        // restore; the circuit comes up un-restored and the caller supplies the
+        // checkpoint base itself.
+        if let Some(init_checkpoint) = init_checkpoint {
+            if !defer_restore {
+                dbsp.send_restore(init_checkpoint.to_string().into())?;
+            }
         }
 
         Ok((dbsp, ret))

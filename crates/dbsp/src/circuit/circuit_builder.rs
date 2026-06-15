@@ -1114,6 +1114,13 @@ pub trait Node: Any {
     /// Call [`Operator::start_compaction`](super::operator_traits::Operator::start_compaction) on the operator this node encapsulates.
     fn start_compaction(&mut self);
 
+    /// Call
+    /// [`Operator::start_bootstrap_output_caching`](super::operator_traits::Operator::start_bootstrap_output_caching)
+    /// on the operator this node encapsulates.
+    ///
+    /// The default is a no-op; only output sink nodes forward it.
+    fn start_bootstrap_output_caching(&mut self) {}
+
     /// Place operator in the replay mode.
     ///
     /// In the replay mode the operator streams its stored state to a temporary
@@ -4888,6 +4895,10 @@ where
         self.operator.start_compaction()
     }
 
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
+    }
+
     fn clear_state(&mut self) -> Result<(), DbspError> {
         self.operator.clear_state()
     }
@@ -5056,6 +5067,10 @@ where
 
     fn start_compaction(&mut self) {
         self.operator.start_compaction()
+    }
+
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
     }
 
     fn clear_state(&mut self) -> Result<(), DbspError> {
@@ -5238,6 +5253,10 @@ where
         self.operator.start_compaction()
     }
 
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
+    }
+
     fn clear_state(&mut self) -> Result<(), DbspError> {
         self.operator.clear_state()
     }
@@ -5409,6 +5428,10 @@ where
 
     fn start_compaction(&mut self) {
         self.operator.start_compaction()
+    }
+
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
     }
 
     fn clear_state(&mut self) -> Result<(), DbspError> {
@@ -5641,6 +5664,10 @@ where
         self.operator.start_compaction()
     }
 
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
+    }
+
     fn clear_state(&mut self) -> Result<(), DbspError> {
         self.operator.clear_state()
     }
@@ -5845,6 +5872,10 @@ where
 
     fn start_compaction(&mut self) {
         self.operator.start_compaction()
+    }
+
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
     }
 
     fn clear_state(&mut self) -> Result<(), DbspError> {
@@ -6077,6 +6108,10 @@ where
         self.operator.start_compaction()
     }
 
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
+    }
+
     fn clear_state(&mut self) -> Result<(), DbspError> {
         self.operator.clear_state()
     }
@@ -6279,6 +6314,10 @@ where
 
     fn start_compaction(&mut self) {
         self.operator.start_compaction()
+    }
+
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
     }
 
     fn clear_state(&mut self) -> Result<(), DbspError> {
@@ -6506,6 +6545,10 @@ where
         self.operator.start_compaction()
     }
 
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
+    }
+
     fn clear_state(&mut self) -> Result<(), DbspError> {
         self.operator.clear_state()
     }
@@ -6714,6 +6757,10 @@ where
 
     fn start_compaction(&mut self) {
         self.operator.start_compaction()
+    }
+
+    fn start_bootstrap_output_caching(&mut self) {
+        self.operator.start_bootstrap_output_caching()
     }
 
     fn clear_state(&mut self) -> Result<(), DbspError> {
@@ -7842,9 +7889,20 @@ impl CircuitHandle {
     /// * After calling this function, the client can invoke `step` repeatedly for replay to make progress.
     /// * Use `is_replay_complete` to determine whether the circuit has finished the replay.
     /// * Use `complete_replay` to finalize the replay phase and prepare the circuit for normal operation after replay is complete.
-    pub fn restore(&mut self, base: &StoragePath) -> Result<Option<BootstrapInfo>, DbspError> {
+    /// Restore the circuit from a checkpoint and put it into replay mode (see
+    /// [`Self::prepare_replay`]).
+    ///
+    /// `for_concurrent_bootstrap` is `true` when this circuit is the bootstrap
+    /// copy (copy 2) of a concurrent bootstrap, in which case the backfilled
+    /// output operators cache their accumulated output for transfer at cutover
+    /// rather than write it to a mailbox no connector reads.
+    pub fn restore(
+        &mut self,
+        base: &StoragePath,
+        for_concurrent_bootstrap: bool,
+    ) -> Result<Option<BootstrapInfo>, DbspError> {
         let analysis = self.analyze_checkpoint(base, true)?;
-        self.prepare_replay(analysis)
+        self.prepare_replay(analysis, for_concurrent_bootstrap)
     }
 
     /// Puts the circuit into replay mode for the bootstrapped region of
@@ -7855,6 +7913,7 @@ impl CircuitHandle {
     fn prepare_replay(
         &mut self,
         analysis: CheckpointAnalysis,
+        for_concurrent_bootstrap: bool,
     ) -> Result<Option<BootstrapInfo>, DbspError> {
         let CheckpointAnalysis {
             replay_sources,
@@ -7891,6 +7950,18 @@ impl CircuitHandle {
             for node_id in nodes_to_backfill.iter() {
                 self.circuit
                     .map_local_node_mut(*node_id, &mut |node| node.clear_state())?;
+            }
+
+            // In a concurrent bootstrap, the backfilled output operators have
+            // no connector reading their mailboxes, so they cache the view's
+            // accumulated output for transfer to the live circuit at cutover
+            // (see `Operator::start_bootstrap_output_caching`).
+            if for_concurrent_bootstrap {
+                for node_id in nodes_to_backfill.iter() {
+                    self.circuit.map_local_node_mut(*node_id, &mut |node| {
+                        node.start_bootstrap_output_caching()
+                    });
+                }
             }
 
             // Prepare the scheduler to only run `participate_in_backfill`.
@@ -8026,7 +8097,9 @@ impl CircuitHandle {
                 self.circuit
                     .add_replay_edges(*original_stream, replay_source.as_ref());
             }
-            let info = self.prepare_replay(analysis)?;
+            // The replay runs in this circuit, not a separate copy, so the
+            // backfilled views' output must reach their mailboxes normally.
+            let info = self.prepare_replay(analysis, false)?;
             return Ok(ConcurrentRestoreOutcome::FellBack { reason, info });
         }
 

@@ -575,7 +575,11 @@ async fn wait_for_status_one_of(
             return pc.deployment_status;
         }
         if print_every_30_seconds.elapsed().as_secs() > 30 {
-            info!("{}", waiting_text);
+            info!(
+                "{} (current status: {})",
+                waiting_text,
+                pc.deployment_status.to_string()
+            );
             print_every_30_seconds = Instant::now();
         }
 
@@ -745,6 +749,7 @@ async fn pipeline(format: OutputFormat, action: PipelineAction, client: Client) 
             initial,
             bootstrap_policy,
             silent_bootstrap,
+            concurrent_bootstrap,
             no_dismiss_error,
         } => {
             if initial != "standby" && initial != "paused" && initial != "running" {
@@ -866,6 +871,7 @@ async fn pipeline(format: OutputFormat, action: PipelineAction, client: Client) 
                 .initial(&initial)
                 .bootstrap_policy(&bootstrap_policy)
                 .silent_bootstrap(silent_bootstrap)
+                .concurrent_bootstrap(concurrent_bootstrap)
                 .dismiss_error(false) // It has already been separately dismissed
                 .send()
                 .await
@@ -964,11 +970,13 @@ async fn pipeline(format: OutputFormat, action: PipelineAction, client: Client) 
         PipelineAction::Approve {
             name,
             silent_bootstrap,
+            concurrent_bootstrap,
         } => {
             let response = client
                 .post_pipeline_approve()
                 .pipeline_name(name.clone())
                 .silent_bootstrap(silent_bootstrap)
+                .concurrent_bootstrap(concurrent_bootstrap)
                 .send()
                 .await
                 .map_err(handle_errors_fatal(
@@ -1038,6 +1046,7 @@ async fn pipeline(format: OutputFormat, action: PipelineAction, client: Client) 
             initial,
             bootstrap_policy,
             silent_bootstrap,
+            concurrent_bootstrap,
             no_dismiss_error,
         } => {
             let current_status = client
@@ -1086,6 +1095,7 @@ async fn pipeline(format: OutputFormat, action: PipelineAction, client: Client) 
                     initial,
                     bootstrap_policy,
                     silent_bootstrap,
+                    concurrent_bootstrap,
                     no_dismiss_error,
                 },
                 client,
@@ -1686,6 +1696,7 @@ async fn pipeline(format: OutputFormat, action: PipelineAction, client: Client) 
             initial,
             bootstrap_policy,
             silent_bootstrap,
+            concurrent_bootstrap,
             no_dismiss_error,
         } => {
             let client2 = client.clone();
@@ -1699,6 +1710,7 @@ async fn pipeline(format: OutputFormat, action: PipelineAction, client: Client) 
                         initial,
                         bootstrap_policy,
                         silent_bootstrap,
+                        concurrent_bootstrap,
                         no_dismiss_error,
                     },
                     client,

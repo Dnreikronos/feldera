@@ -383,19 +383,23 @@ where
                 .front()
                 .and_then(|entry| entry.spine.backpressure_waiter());
             if let Some(waiter) = waiter {
-                local_waiters.push(worker);
-                waiter.await;
+                local_waiters.push((worker, waiter));
             }
         }
-        if !local_waiters.is_empty() {
+        if local_waiters.len() >= self.local_workers.len() / 2 {
+            let mut workers = Vec::with_capacity(local_waiters.len());
+            for (worker, waiter) in local_waiters {
+                workers.push(worker);
+                waiter.await;
+            }
             Span::new("local send wait")
                 .with_start(start)
                 .with_category("Exchange")
                 .with_tooltip(|| {
                     format!(
                         "{name} wait for batches to merge in {} receive queues (for workers {})",
-                        local_waiters.len(),
-                        local_waiters.iter().format(", ")
+                        workers.len(),
+                        workers.iter().format(", ")
                     )
                 })
                 .record();

@@ -17,7 +17,7 @@ use size_of::{HumanBytes, SizeOf, TotalSize};
 use crate::{
     Circuit, NumEntries, Runtime, Scope, Stream,
     circuit::{
-        GlobalNodeId, OwnershipPreference, StepSize, WorkerLocation, WorkerLocations,
+        GlobalNodeId, NodeId, OwnershipPreference, StepSize, WorkerLocation, WorkerLocations,
         circuit_builder::StreamId,
         metadata::{
             ALLOCATED_MEMORY_BYTES, BatchSizeStats, INPUT_BATCHES_STATS, MEMORY_ALLOCATIONS_COUNT,
@@ -40,6 +40,8 @@ use crate::{
 circuit_cache_key!(local StreamingExchangeCacheId<B: Batch>(ExchangeId => Arc<ShardedAccumulator<B>>));
 
 circuit_cache_key!(ShardedAccumulatorId<C, B: Batch>((StreamId, Range<usize>) => Stream<C, Option<Spine<B>>>));
+
+circuit_cache_key!(ShardedAccumulatorRemoteWaiterId(() => NodeId));
 
 impl<C, B> Stream<C, B>
 where
@@ -71,6 +73,26 @@ where
             && runtime.layout().n_workers() > 1
             && runtime.get_step_size() == StepSize::Microsteps
         {
+            let remote_waiter_node_id =
+                if runtime.layout().is_multihost() {
+                    let clients = ExchangeClients::for_runtime(&runtime);
+                    Some(
+                        self.circuit()
+                            .cache_get_or_insert_with(
+                                ShardedAccumulatorRemoteWaiterId::new(()),
+                                move || {
+                                    let waiter = self.circuit().add_source(
+                                        ShardedAccumulatorRemoteWaiter::new(clients.clone()),
+                                    );
+                                    waiter.local_node_id()
+                                },
+                            )
+                            .clone(),
+                    )
+                } else {
+                    None
+                };
+
             self.circuit()
                 .cache_get_or_insert_with(
                     ShardedAccumulatorId::new((self.stream_id(), workers.clone())),
@@ -83,10 +105,12 @@ where
                             exchange_id,
                             factories,
                         );
-                        let waiter = self.circuit().add_source(ShardedAccumulatorWaiter::new(
-                            Some(Location::caller()),
-                            exchange.clone(),
-                        ));
+                        let local_waiter =
+                            self.circuit()
+                                .add_source(ShardedAccumulatorLocalWaiter::new(
+                                    Some(Location::caller()),
+                                    exchange.clone(),
+                                ));
                         let receiver = self
                             .circuit()
                             .add_exchange(
@@ -99,7 +123,11 @@ where
                             )
                             .mark_sharded_workers(workers.clone());
                         self.circuit()
-                            .add_dependency(receiver.local_node_id(), waiter.local_node_id());
+                            .add_dependency(receiver.local_node_id(), local_waiter.local_node_id());
+                        if let Some(remote_waiter_node_id) = remote_waiter_node_id {
+                            self.circuit()
+                                .add_dependency(receiver.local_node_id(), remote_waiter_node_id);
+                        }
                         receiver
                     },
                 )
@@ -626,7 +654,33 @@ where
     }
 }
 
-struct ShardedAccumulatorWaiter<B>
+struct ShardedAccumulatorRemoteWaiter {
+    clients: Arc<ExchangeClients>,
+}
+
+impl Operator for ShardedAccumulatorRemoteWaiter {
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        Cow::Borrowed("ShardedAccumulatorRemoteWaiter")
+    }
+
+    fn fixedpoint(&self, _scope: crate::circuit::Scope) -> bool {
+        true
+    }
+}
+
+impl SourceOperator<()> for ShardedAccumulatorRemoteWaiter {
+    async fn eval(&mut self) {
+        self.clients.wait().await;
+    }
+}
+
+impl ShardedAccumulatorRemoteWaiter {
+    fn new(clients: Arc<ExchangeClients>) -> Self {
+        Self { clients }
+    }
+}
+
+struct ShardedAccumulatorLocalWaiter<B>
 where
     B: Batch,
 {
@@ -635,7 +689,7 @@ where
     name: OperatorName,
 }
 
-impl<B> ShardedAccumulatorWaiter<B>
+impl<B> ShardedAccumulatorLocalWaiter<B>
 where
     B: Batch,
 {
@@ -643,17 +697,17 @@ where
         Self {
             exchange,
             location,
-            name: OperatorName::new("ShardedAccumulatorWaiter"),
+            name: OperatorName::new("ShardedAccumulatorLocalWaiter"),
         }
     }
 }
 
-impl<B> Operator for ShardedAccumulatorWaiter<B>
+impl<B> Operator for ShardedAccumulatorLocalWaiter<B>
 where
     B: Batch,
 {
     fn name(&self) -> std::borrow::Cow<'static, str> {
-        Cow::Borrowed("ShardedAccumulatorWaiter")
+        Cow::Borrowed("ShardedAccumulatorLocalWaiter")
     }
 
     fn location(&self) -> OperatorLocation {
@@ -669,7 +723,7 @@ where
     }
 }
 
-impl<B> SourceOperator<()> for ShardedAccumulatorWaiter<B>
+impl<B> SourceOperator<()> for ShardedAccumulatorLocalWaiter<B>
 where
     B: Batch,
 {

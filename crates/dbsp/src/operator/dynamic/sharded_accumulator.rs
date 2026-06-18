@@ -73,25 +73,20 @@ where
             && runtime.layout().n_workers() > 1
             && runtime.get_step_size() == StepSize::Microsteps
         {
-            let remote_waiter_node_id =
-                if runtime.layout().is_multihost() {
-                    let clients = ExchangeClients::for_runtime(&runtime);
-                    Some(
-                        self.circuit()
-                            .cache_get_or_insert_with(
-                                ShardedAccumulatorRemoteWaiterId::new(()),
-                                move || {
-                                    let waiter = self.circuit().add_source(
-                                        ShardedAccumulatorRemoteWaiter::new(clients.clone()),
-                                    );
-                                    waiter.local_node_id()
-                                },
-                            )
-                            .clone(),
-                    )
-                } else {
-                    None
-                };
+            let remote_waiter_node_id = if runtime.layout().is_multihost() {
+                let clients = ExchangeClients::for_runtime(&runtime);
+                Some(*self.circuit().cache_get_or_insert_with(
+                    ShardedAccumulatorRemoteWaiterId::new(()),
+                    move || {
+                        let waiter = self
+                            .circuit()
+                            .add_source(ShardedAccumulatorRemoteWaiter::new(clients.clone()));
+                        waiter.local_node_id()
+                    },
+                ))
+            } else {
+                None
+            };
 
             self.circuit()
                 .cache_get_or_insert_with(

@@ -36,6 +36,7 @@ import {
   listClusterEvents,
   listPipelineEvents,
   listPipelines,
+  type PatchPipeline,
   type PipelineSelectedInfo,
   type PostPutPipeline,
   type ProgramError,
@@ -239,10 +240,14 @@ export const programStatusOf = (status: PipelineStatus) =>
     .exhaustive()
 
 const toPipelineThumb = (
-  pipeline: Omit<ExtendedPipelineDescr, 'program_code' | 'program_error' | 'udf_rust' | 'udf_toml'>
+  pipeline: Omit<
+    ExtendedPipelineDescr,
+    'program_code' | 'program_error' | 'udf_rust' | 'udf_toml'
+  > & { tags?: string[] }
 ) => ({
   name: pipeline.name,
   description: pipeline.description,
+  tags: pipeline.tags ?? [],
   storageStatus: pipeline.storage_status,
   ...consolidatePipelineStatus(
     pipeline.program_status,
@@ -286,8 +291,9 @@ const toExtendedPipeline = ({
   deployment_desired_status,
   deployment_error,
   ...pipeline
-}: ExtendedPipelineDescr) => ({
+}: ExtendedPipelineDescr & { tags?: string[] }) => ({
   createdAt: pipeline.created_at,
+  tags: pipeline.tags ?? [],
   deploymentDesiredStatus: deployment_desired_status,
   deploymentError: deployment_error,
   deploymentStatus: deployment_status,
@@ -434,13 +440,15 @@ export const putPipeline = async (
 
 export const patchPipeline = async (
   pipeline_name: string,
-  pipeline: Partial<Pipeline>,
+  pipeline: Partial<Pipeline> & { tags?: string[] },
   options?: FetchOptions
 ) => {
   return mapResponse(
     _patchPipeline({
       path: { pipeline_name },
-      body: fromPipeline(pipeline),
+      // `tags` is a UI-side concept the generated request type does not yet declare;
+      // forward it so the field round-trips once the backend supports it.
+      body: { ...fromPipeline(pipeline), tags: pipeline.tags } as PatchPipeline,
       ...options
     }),
     toExtendedPipeline

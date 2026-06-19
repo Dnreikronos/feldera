@@ -366,6 +366,7 @@ where
     B: Batch,
 {
     async fn wait(&self, name: Arc<String>) {
+        /*
         let start = Instant::now();
         let mut local_waiters = Vec::new();
         for (rxq, worker) in self.rxq.iter().zip(self.local_workers.clone()) {
@@ -398,7 +399,7 @@ where
                     )
                 })
                 .record();
-        }
+        }*/
     }
 }
 

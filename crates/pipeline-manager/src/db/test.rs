@@ -2,6 +2,7 @@ use crate::api::support_data_collector::SupportBundleData;
 use crate::auth::{generate_api_key, TenantRecord};
 use crate::db::error::DBError;
 use crate::db::error::DBError::InvalidResourcesStatusNotRemain;
+use crate::db::operations::pipeline::get_pipeline_by_id_for_monitoring;
 use crate::db::storage::{ExtendedPipelineDescrRunner, Storage};
 use crate::db::storage_postgres::{is_pipeline_assigned_to_worker, StoragePostgres};
 use crate::db::types::api_key::{ApiKeyDescr, ApiKeyId, ApiPermission};
@@ -53,7 +54,8 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use std::vec;
-use tokio::sync::Mutex;
+use tokio::spawn;
+use tokio::sync::{oneshot, Mutex};
 use tokio::time::sleep;
 use tracing::info;
 use uuid::Uuid;
@@ -2710,6 +2712,165 @@ async fn pipeline_provision_version_guard() {
         )
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn pipeline_concurrent_access_stall() {
+    let handle = test_setup().await;
+    let tenant_id = TenantRecord::default().id;
+
+    // Create pipeline
+    let pipeline = handle
+        .db
+        .new_pipeline(
+            tenant_id,
+            Uuid::now_v7(),
+            "v0",
+            PipelineDescr {
+                name: "example1".to_string(),
+                description: "d1".to_string(),
+                runtime_config: json!({}),
+                program_code: "c1".to_string(),
+                udf_rust: "r1".to_string(),
+                udf_toml: "t2".to_string(),
+                program_config: json!({}),
+            },
+        )
+        .await
+        .unwrap();
+
+    // Client to create transactions with
+    let mut client1 = handle.db.pool.get().await.unwrap();
+    let mut client2 = handle.db.pool.get().await.unwrap();
+
+    // Non-conflicting
+    for (row_lock1, row_lock2) in [(false, false), (true, false), (false, true)] {
+        let txn1 = client1.transaction().await.unwrap();
+        let txn2 = client2.transaction().await.unwrap();
+        get_pipeline_by_id_for_monitoring(&txn1, tenant_id, pipeline.id, row_lock1)
+            .await
+            .unwrap();
+        get_pipeline_by_id_for_monitoring(&txn2, tenant_id, pipeline.id, row_lock2)
+            .await
+            .unwrap();
+        txn1.commit().await.unwrap();
+        txn2.commit().await.unwrap();
+    }
+
+    // Conflicting
+    let txn1 = client1.transaction().await.unwrap();
+    let txn2 = client2.transaction().await.unwrap();
+    get_pipeline_by_id_for_monitoring(&txn1, tenant_id, pipeline.id, true)
+        .await
+        .unwrap();
+    txn2.execute("SET LOCAL statement_timeout = 1000", &[])
+        .await
+        .unwrap();
+    let error = get_pipeline_by_id_for_monitoring(&txn2, tenant_id, pipeline.id, true)
+        .await
+        .unwrap_err();
+    let DBError::PostgresError { error, .. } = error else {
+        unreachable!();
+    };
+    let sql_state = error.as_db_error().unwrap().code();
+    assert!(matches!(
+        sql_state,
+        &tokio_postgres::error::SqlState::QUERY_CANCELED
+    ));
+    txn1.commit().await.unwrap();
+    txn2.commit().await.unwrap();
+}
+
+#[tokio::test]
+async fn pipeline_concurrent_access_deadlock() {
+    let handle = test_setup().await;
+    let tenant_id = TenantRecord::default().id;
+
+    // Create pipeline 1
+    let pipeline1 = handle
+        .db
+        .new_pipeline(
+            tenant_id,
+            Uuid::now_v7(),
+            "v0",
+            PipelineDescr {
+                name: "example1".to_string(),
+                description: "d1".to_string(),
+                runtime_config: json!({}),
+                program_code: "c1".to_string(),
+                udf_rust: "r1".to_string(),
+                udf_toml: "t2".to_string(),
+                program_config: json!({}),
+            },
+        )
+        .await
+        .unwrap();
+
+    // Create pipeline 2
+    let pipeline2 = handle
+        .db
+        .new_pipeline(
+            tenant_id,
+            Uuid::now_v7(),
+            "v0",
+            PipelineDescr {
+                name: "example2".to_string(),
+                description: "d1".to_string(),
+                runtime_config: json!({}),
+                program_code: "c1".to_string(),
+                udf_rust: "r1".to_string(),
+                udf_toml: "t2".to_string(),
+                program_config: json!({}),
+            },
+        )
+        .await
+        .unwrap();
+
+    // Deadlock:
+    // - T2 locks pipeline 2
+    // - T1 locks pipeline 1
+    // - T1 tries to lock pipeline 2 -> waits or deadlock
+    // - T2 tries to lock pipeline 1 -> waits or deadlock
+    let mut client1 = handle.db.pool.get().await.unwrap();
+    let mut client2 = handle.db.pool.get().await.unwrap();
+    let txn2 = client2.transaction().await.unwrap();
+    get_pipeline_by_id_for_monitoring(&txn2, tenant_id, pipeline2.id, true)
+        .await
+        .unwrap();
+    let (tx, rx) = oneshot::channel::<()>();
+    let join_handle = spawn(async move {
+        let txn1 = client1.transaction().await.unwrap();
+        get_pipeline_by_id_for_monitoring(&txn1, tenant_id, pipeline1.id, true)
+            .await
+            .unwrap();
+        tx.send(()).unwrap();
+        if let Err(e) =
+            get_pipeline_by_id_for_monitoring(&txn1, tenant_id, pipeline2.id, true).await
+        {
+            return Some(e);
+        }
+        txn1.commit().await.unwrap();
+        return None;
+    });
+    rx.await.unwrap();
+    let t2_error = if let Err(e) =
+        get_pipeline_by_id_for_monitoring(&txn2, tenant_id, pipeline1.id, true).await
+    {
+        Some(e)
+    } else {
+        None
+    };
+    let t1_error = join_handle.await.unwrap();
+    assert!(!(t1_error.is_some() && t2_error.is_some()));
+    let error = t1_error.unwrap_or_else(|| t2_error.unwrap());
+    let DBError::PostgresError { error, .. } = error else {
+        unreachable!();
+    };
+    let sql_state = error.as_db_error().unwrap().code();
+    assert!(matches!(
+        sql_state,
+        &tokio_postgres::error::SqlState::T_R_DEADLOCK_DETECTED
+    ));
 }
 
 //////////////////////////////////////////////////////////////////////////////
